@@ -91,6 +91,7 @@
     <string name="reset_file">重置</string>
     <string name="rule_file_restore_geoip_success">geoip.dat 已恢复为默认</string>
     <string name="rule_file_restore_geosite_success">geosite.dat 已恢复为默认</string>
+    <string name="rule_file_extract_failed">无法解压规则文件：%1$s。请在设置中下载。</string>
     <string name="invalid_timeout">请输入有效的超时时间（正整数）</string>
     <string name="rule_file_update_url">从URL更新</string>
     <string name="update">更新</string>

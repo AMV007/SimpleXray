@@ -91,6 +91,7 @@
     <string name="reset_file">Reset</string>
     <string name="rule_file_restore_geoip_success">geoip.dat dipulihkan ke bawaan</string>
     <string name="rule_file_restore_geosite_success">geosite.dat dipulihkan ke bawaan</string>
+    <string name="rule_file_extract_failed">Tidak dapat mengekstrak berkas aturan: %1$s. Unduh di Pengaturan.</string>
     <string name="invalid_timeout">Masukkan batas waktu yang valid (bilangan bulat positif)</string>
     <string name="rule_file_update_url">Perbarui dari URL</string>
     <string name="update">Perbarui</string>

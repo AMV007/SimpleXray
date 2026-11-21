@@ -501,10 +501,24 @@ class FileManager(private val application: Application, private val prefs: Prefe
         }
     }
 
-    fun extractAssetsIfNeeded() {
+    /**
+     * Copies the bundled rule files out of the APK assets into the app's files dir.
+     *
+     * A missing or unreadable asset must not take the whole app down: the caller runs
+     * this on a background dispatcher, so an escaping exception used to crash on
+     * startup. Failures are logged and reported through the returned list instead, and
+     * the user can still download the rules from Settings.
+     *
+     * @return names of the files that could not be extracted.
+     */
+    fun extractAssetsIfNeeded(): List<String> {
         val files = arrayOf("geoip.dat", "geosite.dat")
+        val failed = mutableListOf<String>()
         val dir = application.filesDir
-        dir.mkdirs()
+        if (!dir.mkdirs() && !dir.isDirectory) {
+            Log.e(TAG, "Cannot create files dir: ${dir.absolutePath}")
+            return files.toList()
+        }
         for (file in files) {
             val targetFile = File(dir, file)
             var needsExtraction = false
@@ -521,6 +535,7 @@ class FileManager(private val application: Application, private val prefs: Prefe
                 try {
                     val existingFileHash =
                         calculateSha256(Files.newInputStream(targetFile.toPath()))
+                    // calculateSha256 closes the stream it is handed.
                     val assetHash = calculateSha256(application.assets.open(file))
                     if (existingFileHash != assetHash) {
                         needsExtraction = true
@@ -535,28 +550,43 @@ class FileManager(private val application: Application, private val prefs: Prefe
             } else {
                 needsExtraction = true
             }
-            if (needsExtraction) {
-                try {
-                    application.assets.open(file).use { `in` ->
-                        FileOutputStream(targetFile).use { out ->
-                            val buffer = ByteArray(1024)
-                            var read: Int
-                            while ((`in`.read(buffer).also { read = it }) != -1) {
-                                out.write(buffer, 0, read)
-                            }
-                            Log.d(
-                                TAG,
-                                "Extracted asset: " + file + " to " + targetFile.absolutePath
-                            )
-                        }
-                    }
-                } catch (e: IOException) {
-                    throw RuntimeException("Failed to extract asset: $file", e)
-                }
-            } else {
+
+            if (!needsExtraction) {
                 Log.d(TAG, "Asset $file already exists and matches hash, skipping extraction.")
+                continue
+            }
+
+            // Extract into a sibling temp file first: a failure mid-copy must not leave
+            // a truncated .dat behind, which would otherwise hash-mismatch forever.
+            val tmpFile = File(dir, "$file.tmp")
+            try {
+                application.assets.open(file).use { `in` ->
+                    FileOutputStream(tmpFile).use { out ->
+                        val buffer = ByteArray(1024)
+                        var read: Int
+                        while ((`in`.read(buffer).also { read = it }) != -1) {
+                            out.write(buffer, 0, read)
+                        }
+                        out.fd.sync()
+                    }
+                }
+                if (tmpFile.length() == 0L) {
+                    throw IOException("Extracted asset is empty: $file")
+                }
+                if (targetFile.exists() && !targetFile.delete()) {
+                    throw IOException("Cannot replace ${targetFile.absolutePath}")
+                }
+                if (!tmpFile.renameTo(targetFile)) {
+                    throw IOException("Cannot move ${tmpFile.absolutePath} to ${targetFile.absolutePath}")
+                }
+                Log.d(TAG, "Extracted asset: $file to ${targetFile.absolutePath}")
+            } catch (e: IOException) {
+                tmpFile.delete()
+                failed += file
+                Log.e(TAG, "Failed to extract asset: $file", e)
             }
         }
+        return failed
     }
 
     suspend fun importRuleFile(uri: Uri, filename: String): Boolean {

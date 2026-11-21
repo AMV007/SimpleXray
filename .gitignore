@@ -10,3 +10,4 @@ local.properties
 app/src/main/assets/geoip.dat
 app/src/main/assets/geosite.dat
 app/src/main/assets/.rules-dat-version
+app/src/main/jniLibs/.xray-core-version

@@ -82,6 +82,196 @@ def downloadRulesDat = tasks.register('downloadRulesDat') {
     }
 }
 
+/**
+ * libxray.so is the Xray-core binary executed as a child process at runtime. It is
+ * gitignored, so a fresh clone builds an APK without it and the core silently
+ * fails to start. Provide it automatically, two ways:
+ *
+ *   -PxrayFromSource   compile Xray-core from source (needs Go + NDK; slow)
+ *   default            unpack the official prebuilt android binary from the
+ *                      XTLS/Xray-core release (fast, no extra toolchain)
+ *
+ * Both are pinned to XRAY_CORE_VERSION in version.properties, so switching modes
+ * rebuilds the binary when the pinned version changes.
+ */
+def xrayJniLibsDir = file('src/main/jniLibs')
+// abi directory -> release asset suffix / GOARCH used when building from source.
+def xrayReleaseAssets = ['arm64-v8a': 'arm64-v8a', 'x86_64': 'amd64']
+def xrayGoArches = ['arm64-v8a': 'arm64', 'x86_64': 'amd64']
+def xrayArchs = xrayReleaseAssets.keySet()
+def xrayFromSource = project.hasProperty('xrayFromSource')
+// Stamp that records how the currently present binaries were produced.
+def xrayStamp = new File(xrayJniLibsDir, '.xray-core-version')
+def xrayWantedStamp = "${versionProps.XRAY_CORE_VERSION} ${xrayFromSource ? 'source' : 'prebuilt'}\n"
+
+def xrayBinariesUpToDate = { String arch ->
+    def binary = new File(xrayJniLibsDir, "${arch}/libxray.so")
+    return binary.exists() && binary.length() > 0 &&
+            xrayStamp.exists() && xrayStamp.text == xrayWantedStamp
+}
+
+def downloadXrayCore = tasks.register('downloadXrayCore') {
+    group = 'build setup'
+    description = 'Unpacks the official Xray-core android binary into src/main/jniLibs.'
+
+    inputs.property('xrayVersion', versionProps.XRAY_CORE_VERSION)
+    inputs.property('mode', 'prebuilt')
+
+    doLast {
+        if (!xrayFromSource && xrayArchs.every { arch -> xrayBinariesUpToDate(arch) }) {
+            logger.lifecycle("libxray.so ${versionProps.XRAY_CORE_VERSION} already present, skipping")
+            return
+        }
+        xrayReleaseAssets.each { arch, releaseArch ->
+            if (!xrayFromSource && xrayBinariesUpToDate(arch)) {
+                logger.lifecycle("libxray.so (${arch}) is up to date, skipping download")
+                return
+            }
+            def url = "https://github.com/XTLS/Xray-core/releases/download/" +
+                    "${versionProps.XRAY_CORE_VERSION}/Xray-android-${releaseArch}.zip"
+            logger.lifecycle("Downloading ${url}")
+            def workDir = new File(temporaryDir, arch)
+            workDir.mkdirs()
+            def zip = new File(workDir, 'xray.zip')
+            new URL(url).openStream().withCloseable { input ->
+                zip.withOutputStream { output -> output << input }
+            }
+            def unzipDir = new File(workDir, 'unzipped')
+            // Xray ships a "xray" executable inside the zip; extract just that entry.
+            new java.util.zip.ZipFile(zip).withCloseable { zf ->
+                def entry = zf.entries().find { it.name == 'xray' }
+                if (entry == null) {
+                    throw new GradleException("No 'xray' entry in ${url}")
+                }
+                unzipDir.mkdirs()
+                def binary = new File(unzipDir, 'libxray.so')
+                zf.getInputStream(entry).withCloseable { input ->
+                    binary.withOutputStream { output -> output << input }
+                }
+            }
+            def targetDir = new File(xrayJniLibsDir, arch)
+            targetDir.mkdirs()
+            def target = new File(targetDir, 'libxray.so')
+            if (target.exists() && !target.delete()) {
+                throw new GradleException("Cannot replace ${target.absolutePath}")
+            }
+            new File(unzipDir, 'libxray.so').renameTo(target)
+            if (target.length() == 0) {
+                target.delete()
+                throw new GradleException("Extracted libxray.so (${arch}) is empty: ${url}")
+            }
+            logger.lifecycle("Saved libxray.so (${arch}, ${target.length()} bytes)")
+        }
+        xrayStamp.text = xrayWantedStamp
+    }
+}
+
+def buildXrayFromSource = tasks.register('buildXrayFromSource') {
+    group = 'build setup'
+    description = 'Compiles Xray-core from source into src/main/jniLibs (needs Go + NDK).'
+
+    inputs.property('xrayVersion', versionProps.XRAY_CORE_VERSION)
+    inputs.property('goVersion', versionProps.GO_VERSION)
+    inputs.property('ndkVersion', versionProps.NDK_VERSION)
+    inputs.property('mode', 'source')
+
+    doLast {
+        if (xrayArchs.every { arch -> xrayBinariesUpToDate(arch) }) {
+            logger.lifecycle("libxray.so ${versionProps.XRAY_CORE_VERSION} (source) already present, skipping")
+            return
+        }
+        def goExecutable = System.getenv('GO') ?: 'go'
+        try {
+            def versionOut = new ByteArrayOutputStream()
+            project.exec {
+                commandLine goExecutable, 'version'
+                standardOutput = versionOut
+                ignoreExitValue = true
+            }
+            if (!versionOut.toString().trim()) {
+                throw new GradleException('go is not on PATH')
+            }
+        } catch (Exception e) {
+            throw new GradleException(
+                    'Building Xray-core from source requires Go on PATH. ' +
+                            'Install Go ' + versionProps.GO_VERSION + ' or drop -PxrayFromSource ' +
+                            'to use the official prebuilt binary.', e)
+        }
+
+        def sdkDir = android.sdkDirectory
+        def ndkDir = new File(sdkDir, "ndk/${versionProps.NDK_VERSION}")
+        if (!ndkDir.isDirectory()) {
+            throw new GradleException(
+                    "NDK ${versionProps.NDK_VERSION} not found at ${ndkDir}. Install it or drop " +
+                            '-PxrayFromSource to use the official prebuilt binary.')
+        }
+        def toolchain = new File(ndkDir, 'toolchains/llvm/prebuilt')
+        def hostDir = toolchain.listFiles()?.find { it.isDirectory() }
+        if (hostDir == null) {
+            throw new GradleException("No LLVM toolchain under ${toolchain}")
+        }
+
+        def srcDir = new File(temporaryDir, 'Xray-core')
+        def git = { String... args ->
+            def out = new ByteArrayOutputStream()
+            project.exec {
+                commandLine([ 'git' ] + args.toList())
+                workingDir = srcDir
+                // Keep git chatter out of the normal build output.
+                standardOutput = out
+            }
+            return out.toString().trim()
+        }
+        if (!new File(srcDir, '.git').isDirectory()) {
+            logger.lifecycle("Cloning Xray-core ${versionProps.XRAY_CORE_VERSION}")
+            project.exec {
+                commandLine 'git', 'clone', '--depth', '1', '--branch',
+                        versionProps.XRAY_CORE_VERSION, 'https://github.com/XTLS/Xray-core.git',
+                        srcDir.absolutePath
+            }
+        }
+        def commitId = git('rev-parse', 'HEAD').take(7)
+
+        xrayGoArches.each { arch, goArch ->
+            if (xrayBinariesUpToDate(arch)) {
+                logger.lifecycle("libxray.so (${arch}) is up to date, skipping build")
+                return
+            }
+            def ccName = arch == 'arm64-v8a'
+                    ? 'aarch64-linux-android24-clang'
+                    : 'x86_64-linux-android24-clang'
+            def cc = new File(hostDir, "bin/${ccName}")
+            if (!cc.isFile()) {
+                throw new GradleException("Android clang not found: ${cc}")
+            }
+            logger.lifecycle("Building libxray.so for ${arch} (${commitId})")
+            def out = new File(temporaryDir, "xray-${arch}")
+            project.exec {
+                commandLine goExecutable, 'build', '-o', out.absolutePath, '-trimpath', '-buildvcs=false',
+                        "-ldflags=-X github.com/xtls/xray-core/core.build=${commitId} -s -w -buildid= -checklinkname=0",
+                        '-v', './main'
+                workingDir = srcDir
+                environment 'GOOS', 'android'
+                environment 'GOARCH', goArch
+                environment 'CGO_ENABLED', '1'
+                environment 'CC', cc.absolutePath
+            }
+            def targetDir = new File(xrayJniLibsDir, arch)
+            targetDir.mkdirs()
+            def target = new File(targetDir, 'libxray.so')
+            if (target.exists() && !target.delete()) {
+                throw new GradleException("Cannot replace ${target.absolutePath}")
+            }
+            out.renameTo(target)
+            logger.lifecycle("Saved libxray.so (${arch}, ${target.length()} bytes)")
+        }
+        xrayStamp.text = xrayWantedStamp
+    }
+}
+
+// Only the selected mode runs; the other task stays available for manual use.
+def provideXrayCore = xrayFromSource ? buildXrayFromSource : downloadXrayCore
+
 android {
     namespace "com.simplexray.an"
     compileSdk 35
@@ -217,11 +407,14 @@ android {
     }
 }
 
-// Fetch geoip.dat / geosite.dat before assets are merged into the APK, so a fresh
-// clone builds an APK that does not crash on startup.
+// Fetch the runtime payload (rule files, Xray-core binary) before it is merged into
+// the APK, so a fresh clone builds an APK that does not crash on startup.
 tasks.configureEach { task ->
     if (task.name.startsWith('merge') && task.name.endsWith('Assets')) {
         task.dependsOn(downloadRulesDat)
+    }
+    if (task.name.startsWith('merge') && task.name.endsWith('NativeLibs')) {
+        task.dependsOn(provideXrayCore)
     }
 }
 

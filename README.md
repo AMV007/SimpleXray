@@ -48,7 +48,11 @@ The project **includes a simplified version** with basic rules (`"geoip:private"
     git clone --recursive https://github.com/lhear/SimpleXray
     ```
 3.  **Import**: Open the project in Android Studio.
-4.  **Integrate Core**: Place the Xray-core binary (`libxray.so`) for your target architecture in `app/src/main/jniLibs/[architecture directory]`. E.g., `app/src/main/jniLibs/arm64-v8a/libxray.so`.
+4.  **Integrate Core**: The Xray-core binary (`libxray.so`) is **not** committed. It is provisioned automatically into `app/src/main/jniLibs/[abi]/` by the `downloadXrayCore` Gradle task, which unpacks the official `Xray-android-*` release pinned by `XRAY_CORE_VERSION` in [version.properties](version.properties). No Go or NDK needed for this default path. To compile the core from source instead (requires Go `GO_VERSION` and the NDK `NDK_VERSION`), add the `xrayFromSource` property:
+    ```bash
+    ./gradlew app:assembleDebug -PxrayFromSource
+    ```
+    Both modes are wired into the native-libs merge, and each records what it produced in `jniLibs/.xray-core-version`, so bumping the pinned version re-fetches automatically.
 5.  **Data Files**: `geoip.dat` and `geosite.dat` are required for routing and are **not** committed to the repository. They are downloaded automatically into `app/src/main/assets/` by the `downloadRulesDat` Gradle task, using the versions pinned in [version.properties](version.properties) (`GEOIP_VERSION` / `GEOSITE_VERSION`). The task is wired into the asset merge of every build, so no manual step is needed. To fetch them without building, run:
     ```bash
     ./gradlew app:downloadRulesDat

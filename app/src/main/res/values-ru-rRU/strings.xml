@@ -91,6 +91,7 @@
     <string name="reset_file">Сбросить</string>
     <string name="rule_file_restore_geoip_success">geoip.dat восстановлен по умолчанию</string>
     <string name="rule_file_restore_geosite_success">geosite.dat восстановлен по умолчанию</string>
+    <string name="rule_file_extract_failed">Не удалось распаковать файлы правил: %1$s. Загрузите их в настройках.</string>
     <string name="invalid_timeout">Пожалуйста, введите корректный тайм-аут (положительное число)</string>
     <string name="rule_file_update_url">Обновить с URL</string>
     <string name="update">Обновить</string>

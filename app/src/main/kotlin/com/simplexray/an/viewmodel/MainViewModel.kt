@@ -399,7 +399,15 @@ class MainViewModel(application: Application) :
     }
 
     fun extractAssetsIfNeeded() {
-        fileManager.extractAssetsIfNeeded()
+        val failed = fileManager.extractAssetsIfNeeded()
+        if (failed.isNotEmpty()) {
+            Log.w(TAG, "Could not extract assets: ${failed.joinToString()}")
+            _uiEvent.trySend(
+                MainViewUiEvent.ShowSnackbar(
+                    application.getString(R.string.rule_file_extract_failed, failed.joinToString())
+                )
+            )
+        }
     }
 
     fun updateSocksAddress(addressString: String): Boolean {
