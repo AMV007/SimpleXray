@@ -42,7 +42,7 @@ The project **includes a simplified version** with basic rules (`"geoip:private"
 
 ## Build Guide (Developers)
 
-1.  **Environment**: Install [Android Studio](https://developer.android.com/studio) and configure the Android SDK.
+1.  **Environment**: Install [Android Studio](https://developer.android.com/studio) and configure the Android SDK. The build runs on **Gradle 9.9** with **AGP 9.5** and requires **JDK 17 or newer** (JDK 21 recommended). AGP 9 compiles Kotlin itself, so the `org.jetbrains.kotlin.android` plugin is not applied.
 2.  **Get Code**: Clone the repo and submodules:
     ```bash
     git clone --recursive https://github.com/lhear/SimpleXray
@@ -57,7 +57,7 @@ The project **includes a simplified version** with basic rules (`"geoip:private"
     ```bash
     ./gradlew app:downloadRulesDat
     ```
-6.  **Build**: Sync Gradle and run the build task.
+6.  **Build**: Sync Gradle and run the build task. The APKs land in `app/build/outputs/apk/renamed/<variant>/` under the release names (`simplexray-<abi>.apk`, `simplexray-universal.apk`).
 
 ## Contributing
 
