@@ -49,7 +49,10 @@ The project **includes a simplified version** with basic rules (`"geoip:private"
     ```
 3.  **Import**: Open the project in Android Studio.
 4.  **Integrate Core**: Place the Xray-core binary (`libxray.so`) for your target architecture in `app/src/main/jniLibs/[architecture directory]`. E.g., `app/src/main/jniLibs/arm64-v8a/libxray.so`.
-5.  **Add Data Files**: Place `geoip.dat` and `geosite.dat` files into the `app/src/main/assets/` directory. These are required for routing.
+5.  **Data Files**: `geoip.dat` and `geosite.dat` are required for routing and are **not** committed to the repository. They are downloaded automatically into `app/src/main/assets/` by the `downloadRulesDat` Gradle task, using the versions pinned in [version.properties](version.properties) (`GEOIP_VERSION` / `GEOSITE_VERSION`). The task is wired into the asset merge of every build, so no manual step is needed. To fetch them without building, run:
+    ```bash
+    ./gradlew app:downloadRulesDat
+    ```
 6.  **Build**: Sync Gradle and run the build task.
 
 ## Contributing

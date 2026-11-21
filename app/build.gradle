@@ -29,6 +29,59 @@ protobuf {
 def versionProps = new Properties()
 file("$rootDir/version.properties").withInputStream { versionProps.load(it) }
 
+/**
+ * geoip.dat / geosite.dat are not committed (see .gitignore) and are required at
+ * runtime: FileManager.extractAssetsIfNeeded() copies them out of assets and
+ * crashes the app when they are missing. Download them before the assets are
+ * packaged, using the versions pinned in version.properties.
+ * The release tag is per-file, so each entry carries its own version.
+ */
+def rulesDatAssetDir = file('src/main/assets')
+def rulesDatFiles = [
+        'geoip.dat'  : versionProps.GEOIP_VERSION,
+        'geosite.dat': versionProps.GEOSITE_VERSION,
+]
+
+def downloadRulesDat = tasks.register('downloadRulesDat') {
+    group = 'build setup'
+    description = 'Downloads geoip.dat and geosite.dat into src/main/assets.'
+
+    // Stamp of the versions the currently downloaded files were fetched for.
+    def versionStamp = new File(rulesDatAssetDir, '.rules-dat-version')
+    def wantedStamp = "geoip=${versionProps.GEOIP_VERSION}\ngeosite=${versionProps.GEOSITE_VERSION}\n"
+
+    inputs.property('rulesDatVersions', wantedStamp)
+
+    doLast {
+        rulesDatAssetDir.mkdirs()
+        def upToDate = versionStamp.exists() && versionStamp.text == wantedStamp
+        rulesDatFiles.each { fileName, version ->
+            def target = new File(rulesDatAssetDir, fileName)
+            if (upToDate && target.exists() && target.length() > 0) {
+                logger.lifecycle("${fileName} is up to date, skipping download")
+                return
+            }
+            def url = "https://github.com/lhear/v2ray-rules-dat/releases/download/${version}/${fileName}"
+            logger.lifecycle("Downloading ${url}")
+            def tmp = new File(rulesDatAssetDir, "${fileName}.tmp")
+            new URL(url).openStream().withCloseable { input ->
+                tmp.withOutputStream { output -> output << input }
+            }
+            if (tmp.length() == 0) {
+                tmp.delete()
+                throw new GradleException("Downloaded ${fileName} is empty: ${url}")
+            }
+            if (target.exists() && !target.delete()) {
+                tmp.delete()
+                throw new GradleException("Cannot replace ${target.absolutePath}")
+            }
+            tmp.renameTo(target)
+            logger.lifecycle("Saved ${fileName} (${target.length()} bytes)")
+        }
+        versionStamp.text = wantedStamp
+    }
+}
+
 android {
     namespace "com.simplexray.an"
     compileSdk 35
@@ -161,6 +214,14 @@ android {
                 srcDirs 'src/main/kotlin', 'build/generated/source/proto/main/grpckt'
             }
         }
+    }
+}
+
+// Fetch geoip.dat / geosite.dat before assets are merged into the APK, so a fresh
+// clone builds an APK that does not crash on startup.
+tasks.configureEach { task ->
+    if (task.name.startsWith('merge') && task.name.endsWith('Assets')) {
+        task.dependsOn(downloadRulesDat)
     }
 }
 

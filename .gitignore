@@ -9,3 +9,4 @@ app/src/main/jni/hev-socks5-tunnel
 local.properties
 app/src/main/assets/geoip.dat
 app/src/main/assets/geosite.dat
+app/src/main/assets/.rules-dat-version
